@@ -1,0 +1,3 @@
+add_executable(serial_loopback_test serial_loopback_test.c)
+target_link_libraries(serial_loopback_test PRIVATE microserial_core)
+add_test(NAME serial_loopback_test COMMAND serial_loopback_test)
