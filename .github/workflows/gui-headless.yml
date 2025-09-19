@@ -1,0 +1,26 @@
+name: GUI Headless
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  headless-linux:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      MICROSERIAL_FORCE_SOFTWARE: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build core library
+        run: ./scripts/build_all.sh
+
+      - name: Headless renderer probe
+        run: cargo run --manifest-path gui/Cargo.toml -- --headless-detect
+
+      - name: GUI tests (software rendering)
+        run: cargo test --manifest-path gui/Cargo.toml -- --test-threads=1

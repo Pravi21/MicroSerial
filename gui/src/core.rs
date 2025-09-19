@@ -4,12 +4,18 @@ use std::ptr;
 use std::slice;
 use std::sync::{Arc, Mutex};
 
+use serde::{Deserialize, Serialize};
+use strum::{Display, EnumIter};
+
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
 use bindings::*;
+
+#[link(name = "microserial_core", kind = "static")]
+unsafe extern "C" {}
 
 pub struct SerialPort {
     handle: *mut ms_serial_port,
@@ -20,6 +26,107 @@ pub struct SerialPort {
 pub struct SerialDevice {
     pub path: String,
     pub description: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, EnumIter, Display)]
+pub enum Parity {
+    #[strum(to_string = "None")]
+    None,
+    #[strum(to_string = "Even")]
+    Even,
+    #[strum(to_string = "Odd")]
+    Odd,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, EnumIter, Display)]
+pub enum StopBits {
+    #[strum(to_string = "1")]
+    One,
+    #[strum(to_string = "2")]
+    Two,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, EnumIter, Display)]
+pub enum FlowControl {
+    #[strum(to_string = "None")]
+    None,
+    #[strum(to_string = "RTS/CTS")]
+    RtsCts,
+    #[strum(to_string = "XON/XOFF")]
+    XonXoff,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SerialConfig {
+    pub baud_rate: u32,
+    pub data_bits: u8,
+    pub stop_bits: StopBits,
+    pub parity: Parity,
+    pub flow_control: FlowControl,
+    pub rx_buffer_size: u32,
+    pub tx_buffer_size: u32,
+    pub read_timeout_ms: u32,
+    pub write_timeout_ms: u32,
+}
+
+impl SerialConfig {
+    pub fn to_raw(&self) -> ms_serial_config {
+        #[allow(non_upper_case_globals)]
+        ms_serial_config {
+            baud_rate: self.baud_rate,
+            data_bits: self.data_bits,
+            stop_bits: match self.stop_bits {
+                StopBits::One => 1,
+                StopBits::Two => 2,
+            },
+            parity: match self.parity {
+                Parity::None => ms_serial_parity_MS_SERIAL_PARITY_NONE,
+                Parity::Even => ms_serial_parity_MS_SERIAL_PARITY_EVEN,
+                Parity::Odd => ms_serial_parity_MS_SERIAL_PARITY_ODD,
+            },
+            flow_control: match self.flow_control {
+                FlowControl::None => ms_serial_flow_control_MS_SERIAL_FLOW_NONE,
+                FlowControl::RtsCts => ms_serial_flow_control_MS_SERIAL_FLOW_RTS_CTS,
+                FlowControl::XonXoff => ms_serial_flow_control_MS_SERIAL_FLOW_XON_XOFF,
+            },
+            rx_buffer_size: self.rx_buffer_size,
+            tx_buffer_size: self.tx_buffer_size,
+            read_timeout_ms: self.read_timeout_ms,
+            write_timeout_ms: self.write_timeout_ms,
+        }
+    }
+
+    #[allow(non_upper_case_globals)]
+    pub fn from_raw(raw: ms_serial_config) -> Self {
+        Self {
+            baud_rate: raw.baud_rate,
+            data_bits: raw.data_bits as u8,
+            stop_bits: match raw.stop_bits {
+                2 => StopBits::Two,
+                _ => StopBits::One,
+            },
+            parity: match raw.parity {
+                ms_serial_parity_MS_SERIAL_PARITY_EVEN => Parity::Even,
+                ms_serial_parity_MS_SERIAL_PARITY_ODD => Parity::Odd,
+                _ => Parity::None,
+            },
+            flow_control: match raw.flow_control {
+                ms_serial_flow_control_MS_SERIAL_FLOW_RTS_CTS => FlowControl::RtsCts,
+                ms_serial_flow_control_MS_SERIAL_FLOW_XON_XOFF => FlowControl::XonXoff,
+                _ => FlowControl::None,
+            },
+            rx_buffer_size: raw.rx_buffer_size,
+            tx_buffer_size: raw.tx_buffer_size,
+            read_timeout_ms: raw.read_timeout_ms,
+            write_timeout_ms: raw.write_timeout_ms,
+        }
+    }
+}
+
+impl Default for SerialConfig {
+    fn default() -> Self {
+        SerialConfig::from_raw(default_config_raw())
+    }
 }
 
 struct CallbackState {
@@ -69,8 +176,9 @@ impl SerialPort {
         })
     }
 
-    pub fn configure(&mut self, config: &ms_serial_config) -> Result<(), i32> {
-        let rc = unsafe { ms_serial_port_configure(self.handle, config) };
+    pub fn configure(&mut self, config: &SerialConfig) -> Result<(), i32> {
+        let raw = config.to_raw();
+        let rc = unsafe { ms_serial_port_configure(self.handle, &raw) };
         if rc != 0 {
             return Err(rc);
         }
@@ -123,9 +231,9 @@ impl Drop for SerialPort {
     }
 }
 
-pub fn default_config() -> ms_serial_config {
+fn default_config_raw() -> ms_serial_config {
     ms_serial_config {
-        baud_rate: 115200,
+        baud_rate: 115_200,
         data_bits: 8,
         stop_bits: 1,
         parity: ms_serial_parity_MS_SERIAL_PARITY_NONE,
@@ -135,6 +243,11 @@ pub fn default_config() -> ms_serial_config {
         read_timeout_ms: 100,
         write_timeout_ms: 100,
     }
+}
+
+#[allow(dead_code)]
+pub fn default_config() -> SerialConfig {
+    SerialConfig::default()
 }
 
 pub fn list_serial_ports() -> Result<Vec<SerialDevice>, i32> {
@@ -157,4 +270,27 @@ pub fn list_serial_ports() -> Result<Vec<SerialDevice>, i32> {
     }
     unsafe { ms_serial_port_list_free(raw_list, count) };
     Ok(devices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_config_roundtrip() {
+        let mut cfg = SerialConfig::default();
+        cfg.baud_rate = 230_400;
+        cfg.data_bits = 7;
+        cfg.stop_bits = StopBits::Two;
+        cfg.parity = Parity::Even;
+        cfg.flow_control = FlowControl::RtsCts;
+
+        let raw = cfg.to_raw();
+        let restored = SerialConfig::from_raw(raw);
+        assert_eq!(restored.baud_rate, 230_400);
+        assert_eq!(restored.data_bits, 7);
+        assert_eq!(restored.stop_bits, StopBits::Two);
+        assert_eq!(restored.parity, Parity::Even);
+        assert_eq!(restored.flow_control, FlowControl::RtsCts);
+    }
 }
