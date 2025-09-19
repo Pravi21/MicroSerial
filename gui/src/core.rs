@@ -4,7 +4,12 @@ use std::ptr;
 use std::slice;
 use std::sync::{Arc, Mutex};
 
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+#[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
+
+use bindings::*;
 
 pub struct SerialPort {
     handle: *mut ms_serial_port,
@@ -39,7 +44,9 @@ unsafe extern "C" fn event_trampoline(code: c_int, message: *const c_char, user_
     }
     let state = unsafe { &*(user_data as *const CallbackState) };
     let msg = if !message.is_null() {
-        unsafe { CStr::from_ptr(message) }.to_string_lossy().to_string()
+        unsafe { CStr::from_ptr(message) }
+            .to_string_lossy()
+            .to_string()
     } else {
         String::new()
     };

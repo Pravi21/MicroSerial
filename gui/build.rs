@@ -44,8 +44,7 @@ fn main() {
         .write_to_file(&bindings_path)
         .expect("could not write bindings");
 
-    let contents = fs::read_to_string(&bindings_path)
-        .expect("failed to read generated bindings");
+    let contents = fs::read_to_string(&bindings_path).expect("failed to read generated bindings");
     let patched = contents.replace("extern \"C\" {", "unsafe extern \"C\" {");
     fs::write(&bindings_path, patched).expect("failed to patch bindings for Rust 2024");
 }
