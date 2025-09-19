@@ -1,11 +1,14 @@
 # Build & Run Guide
 
+> **Note:** Prefer the cross-platform bootstrap scripts described in `docs/build/README.md` for automated auditing, installation,
+> and builds. The manual steps below remain for reference and ad-hoc debugging.
+
 ## Prerequisites
 
-* **Linux or macOS** with POSIX toolchain
-* CMake ≥ 3.18, Clang/GCC with C11 support
-* Rust toolchain (stable) + Cargo
-* `pkg-config`, `clang`, and development headers for X11/Wayland (auto-pulled by egui/wgpu)
+* **Linux/macOS/Windows** development environment
+* CMake ≥ 3.20, Ninja, and a C11 compiler (GCC ≥ 9, Clang ≥ 12, or MSVC 2022)
+* Rust toolchain (stable) managed by rustup + Cargo
+* `pkg-config`, development headers for platform serial APIs, and a Git client
 
 ## Build the C Core
 
