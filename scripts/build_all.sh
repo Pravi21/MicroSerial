@@ -7,4 +7,5 @@ BUILD_DIR="${ROOT_DIR}/build/core"
 cmake -S "${ROOT_DIR}/core" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${BUILD_DIR}" --config Release
 
-cargo build --manifest-path "${ROOT_DIR}/gui/Cargo.toml"
+echo "[microserial] Building GUI (release)"
+cargo build --manifest-path "${ROOT_DIR}/gui/Cargo.toml" --release --locked
