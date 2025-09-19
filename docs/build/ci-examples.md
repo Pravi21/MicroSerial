@@ -14,7 +14,7 @@ Integrate the workflow into your own pipelines or adapt the steps below:
   run: ./scripts/linux/bootstrap.sh --audit-only
 
 - name: Bootstrap & build
-  run: ./scripts/linux/bootstrap.sh
+  run: ./scripts/linux/bootstrap.sh --all --verbose
 ```
 
 Windows runners should invoke PowerShell explicitly:
@@ -24,7 +24,7 @@ Windows runners should invoke PowerShell explicitly:
   shell: pwsh
   run: |
     Set-ExecutionPolicy Bypass -Scope Process -Force
-    ./scripts/windows/bootstrap.ps1 --verbose
+    ./scripts/windows/bootstrap.ps1 --all --verbose
 ```
 
 When running in secure environments seed the package manager caches using the `MICROSERIAL_CACHE_DIR` environment variable and toggle `--offline` to validate offline operation.

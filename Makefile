@@ -15,13 +15,13 @@ audit:
 	$(BOOTSTRAP) --audit-only
 
 bootstrap:
-	$(BOOTSTRAP) --bootstrap
+$(BOOTSTRAP) --install
 
 build:
-	$(BOOTSTRAP) --build
+$(BOOTSTRAP) --build
 
 release:
-	$(BOOTSTRAP)
+$(BOOTSTRAP) --all
 
 clean:
 	rm -rf build gui/target

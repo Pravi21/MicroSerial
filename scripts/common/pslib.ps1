@@ -139,3 +139,65 @@ function Write-MSReportToLog {
     Add-Content -LiteralPath $MS.LogFile -Value "==== Structured Report ===="
     foreach ($line in $MS.Report) { Add-Content -LiteralPath $MS.LogFile -Value $line }
 }
+
+function Invoke-MSDownload {
+    param(
+        [string]$Uri,
+        [string]$ChecksumUri,
+        [string]$Destination
+    )
+
+    $shaPath = "$Destination.sha256"
+    if ($MS.Offline) {
+        if (-not (Test-Path $Destination -PathType Leaf) -or -not (Test-Path $shaPath -PathType Leaf)) {
+            throw "Offline mode active but cache missing for $(Split-Path -Leaf $Destination)"
+        }
+        $expected = ((Get-Content -LiteralPath $shaPath | Select-Object -First 1).Split(' ')[0]).Trim()
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Destination).Hash.ToLowerInvariant()
+        if ($actual -ne $expected.ToLowerInvariant()) {
+            throw "Cached checksum mismatch for $(Split-Path -Leaf $Destination)"
+        }
+        Write-MSLog -Level 'INFO' -Message "Checksum verified from cache for $(Split-Path -Leaf $Destination)"
+        return
+    }
+
+    if ($MS.DryRun) {
+        Write-MSLog -Level 'ACTION' -Message "[dry-run] download $Uri"
+        return
+    }
+
+    $destDir = Split-Path -Parent $Destination
+    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+    $shaTmp = "$shaPath.tmp"
+    $tmp = "$Destination.tmp"
+
+    Write-MSLog -Level 'ACTION' -Message "Fetching checksum: $ChecksumUri"
+    Invoke-WebRequest -Uri $ChecksumUri -OutFile $shaTmp -UseBasicParsing -ErrorAction Stop
+    $expected = ((Get-Content -LiteralPath $shaTmp | Select-Object -First 1).Split(' ')[0]).Trim()
+    if (-not $expected) {
+        Remove-Item -LiteralPath $shaTmp -Force -ErrorAction SilentlyContinue
+        throw "Checksum file empty for $ChecksumUri"
+    }
+
+    if (Test-Path $Destination -PathType Leaf) {
+        $existing = (Get-FileHash -Algorithm SHA256 -LiteralPath $Destination).Hash.ToLowerInvariant()
+        if ($existing -eq $expected.ToLowerInvariant()) {
+            Move-Item -LiteralPath $shaTmp -Destination $shaPath -Force
+            Write-MSLog -Level 'INFO' -Message "Checksum already satisfied for $(Split-Path -Leaf $Destination)"
+            return
+        }
+    }
+
+    Write-MSLog -Level 'ACTION' -Message "Downloading $Uri"
+    Invoke-WebRequest -Uri $Uri -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $tmp).Hash.ToLowerInvariant()
+    if ($actual -ne $expected.ToLowerInvariant()) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $shaTmp -Force -ErrorAction SilentlyContinue
+        throw "Checksum verification failed for $Uri"
+    }
+
+    Move-Item -LiteralPath $tmp -Destination $Destination -Force
+    Move-Item -LiteralPath $shaTmp -Destination $shaPath -Force
+}

@@ -21,7 +21,8 @@ MicroSerial macOS bootstrap
 Usage: bootstrap.sh [options]
 
   --audit-only       Run preflight checks only
-  --bootstrap        Install missing prerequisites (no build)
+  --install          Install missing prerequisites (no build)
+  --all              Audit, install, and build
   --build            Build only (assumes prerequisites)
   --uninstall        Remove build artifacts and cached downloads
   --dry-run          Show actions without executing
@@ -39,7 +40,7 @@ while [ $# -gt 0 ]; do
             DO_BUILD=0
             ms_set_flag audit
             ;;
-        --bootstrap)
+        --install|--bootstrap)
             DO_INSTALL=1
             if [ "$DO_BUILD" -eq -1 ]; then
                 DO_BUILD=0
@@ -51,6 +52,12 @@ while [ $# -gt 0 ]; do
             if [ "$DO_INSTALL" -eq -1 ]; then
                 DO_INSTALL=0
             fi
+            ms_set_flag build
+            ;;
+        --all)
+            DO_INSTALL=1
+            DO_BUILD=1
+            ms_set_flag bootstrap
             ms_set_flag build
             ;;
         --uninstall)
@@ -103,6 +110,8 @@ PKGCFG_MIN=0.29.0
 GIT_MIN=2.30.0
 MAKE_MIN=4.2.0
 CLANG_MIN=12.0.0
+LLVM_MIN=13.0.0
+CURL_MIN=7.70.0
 
 ARCH=$(uname -m)
 case $ARCH in
@@ -132,10 +141,51 @@ check_prereqs() {
     ms_require_command "Ninja" ninja "ninja --version" '^\([0-9.]*\)$' "$NINJA_MIN" ninja
     ms_require_command "pkg-config" pkg-config "pkg-config --version" '^\([0-9.]*\)$' "$PKGCFG_MIN" pkg-config
     ms_require_command "GNU Make" gmake "gmake --version" 'GNU Make \([0-9.]*\)' "$MAKE_MIN" make
+    ms_require_command "curl" curl "curl --version" '^curl \([0-9.]*\).*' "$CURL_MIN" curl
 
     if ! command -v gmake >/dev/null 2>&1 && command -v make >/dev/null 2>&1; then
         ms_append_report "[WARN] BSD make detected; installing gnu make recommended"
         ms_record_missing make
+    fi
+
+    if command -v llvm-config >/dev/null 2>&1; then
+        ms_require_command "LLVM" llvm-config "llvm-config --version" '^\([0-9.]*\)$' "$LLVM_MIN" llvm
+    else
+        ms_append_report "[MISSING] llvm-config -> install: llvm"
+        ms_record_missing llvm
+    fi
+
+    if pkg-config --exists libclang 2>/dev/null; then
+        clang_ver=$(pkg-config --modversion libclang 2>/dev/null)
+        if [ -n "$clang_ver" ]; then
+            if ms_version_ge "$clang_ver" "$LLVM_MIN"; then
+                ms_append_report "[OK] libclang $clang_ver"
+            else
+                ms_append_report "[OUTDATED] libclang $clang_ver (< $LLVM_MIN) -> install: llvm"
+                ms_record_missing llvm
+            fi
+        else
+            ms_append_report "[WARN] libclang version undetected"
+        fi
+    else
+        ms_append_report "[MISSING] libclang development files -> install: llvm"
+        ms_record_missing llvm
+    fi
+
+    if command -v g++ >/dev/null 2>&1; then
+        gpp_banner=$(g++ --version 2>/dev/null | head -n 1)
+        case $gpp_banner in
+            "Apple clang"*)
+                ms_append_report "[WARN] g++ resolves to Apple clang; installing Homebrew gcc recommended"
+                ms_record_missing gcc
+                ;;
+            *)
+                :
+                ;;
+        esac
+    else
+        ms_append_report "[MISSING] GNU C++ compiler -> install: gcc"
+        ms_record_missing gcc
     fi
 
     ms_require_command "rustup" rustup "rustup --version" 'rustup \([0-9.]*\)' "$RUSTUP_MIN" rustup
@@ -163,6 +213,24 @@ check_prereqs() {
             ms_record_missing rustup-target
         fi
     fi
+}
+
+ensure_rustup() {
+    ARCH_TARGET=$EXPECTED_TARGET
+    if ! command -v rustup >/dev/null 2>&1; then
+        if [ "$MS_OFFLINE" -eq 1 ]; then
+            ms_die "rustup missing and offline mode requested"
+        fi
+        installer="$MS_CACHE_DIR/rustup-init-${ARCH_TARGET}"
+        base_url="https://static.rust-lang.org/rustup/dist/${ARCH_TARGET}/rustup-init"
+        ms_download_with_checksum "$base_url" "${base_url}.sha256" "$installer"
+        ms_run_cmd "$installer" -y --profile minimal --no-modify-path
+    fi
+
+    ms_activate_rust_env
+    ms_run_cmd rustup toolchain install stable
+    ms_run_cmd rustup default stable
+    ms_run_cmd rustup target add "$ARCH_TARGET"
 }
 
 add_pkg() {
@@ -217,8 +285,16 @@ macos_install_missing() {
             make)
                 add_pkg BREW_PKGS make
                 ;;
+            llvm)
+                add_pkg BREW_PKGS llvm
+                ;;
+            gcc)
+                add_pkg BREW_PKGS gcc
+                ;;
+            curl)
+                add_pkg BREW_PKGS curl
+                ;;
             rustup)
-                add_pkg BREW_PKGS rustup-init
                 NEED_RUST_INIT=1
                 ;;
             rustup-toolchain)
@@ -239,23 +315,12 @@ macos_install_missing() {
         ms_run_cmd brew install $BREW_PKGS
     fi
 
-    if [ $NEED_RUST_INIT -eq 1 ]; then
-        if ! command -v rustup >/dev/null 2>&1; then
-            if command -v rustup-init >/dev/null 2>&1; then
-                ms_run_cmd rustup-init -y --no-modify-path --profile minimal
-                if [ -f "$HOME/.cargo/env" ]; then
-                    # shellcheck disable=SC1090
-                    . "$HOME/.cargo/env"
-                else
-                    export PATH="$HOME/.cargo/bin:$PATH"
-                fi
-            else
-                ms_die "rustup-init not available after installation"
-            fi
-        fi
-        ms_run_cmd rustup toolchain install stable
-        ms_run_cmd rustup default stable
-        ms_run_cmd rustup target add "$EXPECTED_TARGET"
+    if command -v rustup >/dev/null 2>&1; then
+        NEED_RUST_INIT=1
+    fi
+
+    if [ $NEED_RUST_INIT -eq 1 ] || [ $MS_FORCE -eq 1 ]; then
+        ensure_rustup
     fi
 }
 
