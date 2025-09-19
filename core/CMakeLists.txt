@@ -69,6 +69,18 @@ target_include_directories(microserial_core
 
 target_link_libraries(microserial_core PUBLIC pthread)
 
+include(GNUInstallDirs)
+install(
+    TARGETS microserial_core
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(
+    DIRECTORY include/MicroSerial
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)

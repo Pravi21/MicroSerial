@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 fn main() {
@@ -30,6 +31,7 @@ fn main() {
     let header_path = core_dir.join("include/MicroSerial/ms_core.h");
     let bindings = bindgen::Builder::default()
         .header(header_path.to_string_lossy().into_owned())
+        .clang_arg(format!("-I{}", core_dir.join("include").display()))
         .allowlist_function("ms_.*")
         .allowlist_type("ms_.*")
         .allowlist_var("MS_.*")
@@ -37,7 +39,13 @@ fn main() {
         .expect("unable to generate bindings");
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let bindings_path = out_path.join("bindings.rs");
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
+        .write_to_file(&bindings_path)
         .expect("could not write bindings");
+
+    let contents = fs::read_to_string(&bindings_path)
+        .expect("failed to read generated bindings");
+    let patched = contents.replace("extern \"C\" {", "unsafe extern \"C\" {");
+    fs::write(&bindings_path, patched).expect("failed to patch bindings for Rust 2024");
 }

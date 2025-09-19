@@ -26,8 +26,8 @@ unsafe extern "C" fn data_trampoline(data: *const u8, length: usize, user_data: 
     if data.is_null() || user_data.is_null() {
         return;
     }
-    let slice = slice::from_raw_parts(data, length);
-    let state = &*(user_data as *const CallbackState);
+    let slice = unsafe { slice::from_raw_parts(data, length) };
+    let state = unsafe { &*(user_data as *const CallbackState) };
     if let Ok(mut guard) = state.on_data.lock() {
         (guard.as_mut())(slice);
     }
@@ -37,9 +37,9 @@ unsafe extern "C" fn event_trampoline(code: c_int, message: *const c_char, user_
     if user_data.is_null() {
         return;
     }
-    let state = &*(user_data as *const CallbackState);
+    let state = unsafe { &*(user_data as *const CallbackState) };
     let msg = if !message.is_null() {
-        CStr::from_ptr(message).to_string_lossy().to_string()
+        unsafe { CStr::from_ptr(message) }.to_string_lossy().to_string()
     } else {
         String::new()
     };
