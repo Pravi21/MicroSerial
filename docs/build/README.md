@@ -7,14 +7,15 @@ idempotent, audit first, and only install what is missing. Logs are written to `
 
 | OS      | Command |
 |---------|---------|
-| Linux   | `./scripts/linux/bootstrap.sh` |
-| macOS   | `./scripts/macos/bootstrap.sh` |
-| Windows | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap.ps1` |
+| Linux   | `./scripts/linux/bootstrap.sh --all` |
+| macOS   | `./scripts/macos/bootstrap.sh --all` |
+| Windows | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\bootstrap.ps1 --all` |
 
 All scripts default to **audit → install missing prerequisites → build**. Use the flags below to tailor behaviour:
 
 * `--audit-only` – perform the full preflight without installing or building.
-* `--bootstrap` – audit + install missing dependencies (skip build).
+* `--install` – audit + install missing dependencies (skip build).
+* `--all` – full pipeline: audit, install, and build in one run.
 * `--build` – rebuild using existing toolchains.
 * `--dry-run` – print actions without executing them.
 * `--force` – reinstall/upgrade even when versions satisfy the minimums.
@@ -27,7 +28,7 @@ When successful the scripts print the release artifact paths:
 * `build/core/libmicroserial_core.a` (or `microserial_core.lib` on Windows).
 * `gui/target/release/microserial_gui[.exe]`.
 
-Logs contain the structured preflight report along with every executed command.
+Logs contain the structured preflight report along with every executed command. Direct downloads (for example the `rustup-init` bootstrapper used on developer machines without a packaged `rustup`) are fetched via HTTPS, validated against upstream SHA-256 sums, cached under `~/.cache/microserial` (or `%USERPROFILE%\.microserial\cache` on Windows), and re-verified on subsequent runs.
 
 ## Offline & cache-aware usage
 
@@ -37,7 +38,7 @@ that all requirements are satisfied without reaching the network.
 ## Workflow Summary
 
 1. **Audit** – detect compilers, SDKs, package managers, and Rust toolchains. No network access occurs.
-2. **Conditional install** – missing tokens are mapped to the preferred package manager (winget/Homebrew/apt/dnf/pacman/scoop/choco). SHA/signature validation is delegated to those managers.
+2. **Conditional install** – missing tokens are mapped to the preferred package manager (winget/Homebrew/apt/dnf/pacman/scoop/choco). Any direct downloads go through the shared checksum helper for tamper detection before execution.
 3. **Build orchestration** – C core via CMake+Ninja, Rust GUI via Cargo, executed after the toolchain environment is healthy.
 4. **Verification** – artifact presence checks and cargo/cmake exit codes gate success.
 

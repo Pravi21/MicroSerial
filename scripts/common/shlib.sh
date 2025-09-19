@@ -222,3 +222,86 @@ ms_write_structured_log() {
         printf "%s\n" "$MS_REPORT"
     } >>"$MS_LOG_FILE"
 }
+
+ms_compute_sha256() {
+    file=$1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+        return
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+        return
+    fi
+    ms_die "No SHA-256 checksum utility found (need sha256sum or shasum)"
+}
+
+ms_download_with_checksum() {
+    url=$1
+    checksum_url=$2
+    dest=$3
+
+    dest_dir=$(dirname "$dest")
+    sha_file="${dest}.sha256"
+    tmp_file="${dest}.tmp"
+    sha_tmp="${sha_file}.tmp"
+
+    if [ "$MS_OFFLINE" -eq 1 ]; then
+        if [ ! -f "$dest" ] || [ ! -f "$sha_file" ]; then
+            ms_die "Offline mode active but cache missing for $(basename "$dest")"
+        fi
+        expected=$(cut -d' ' -f1 "$sha_file" | tr -d '\r' | head -n 1)
+        actual=$(ms_compute_sha256 "$dest")
+        if [ "$expected" != "$actual" ]; then
+            ms_die "Cached checksum mismatch for $(basename "$dest")"
+        fi
+        ms_info "Checksum verified from cache for $(basename "$dest")"
+        return
+    fi
+
+    if [ "$MS_DRY_RUN" -eq 1 ]; then
+        ms_action "[dry-run] download $url"
+        return
+    fi
+
+    mkdir -p "$dest_dir"
+
+    ms_info "Fetching checksum: $checksum_url"
+    ms_run_cmd curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --output "$sha_tmp" "$checksum_url"
+    expected=$(cut -d' ' -f1 "$sha_tmp" | tr -d '\r' | head -n 1)
+    if [ -z "$expected" ]; then
+        rm -f "$sha_tmp"
+        ms_die "Checksum file empty for $checksum_url"
+    fi
+
+    if [ -f "$dest" ]; then
+        actual=$(ms_compute_sha256 "$dest")
+        if [ "$actual" = "$expected" ]; then
+            ms_info "Checksum already satisfied for $(basename "$dest")"
+            mv "$sha_tmp" "$sha_file"
+            return
+        fi
+    fi
+
+    ms_info "Downloading $url"
+    ms_run_cmd curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --output "$tmp_file" "$url"
+    actual=$(ms_compute_sha256 "$tmp_file")
+    if [ "$actual" != "$expected" ]; then
+        rm -f "$tmp_file" "$sha_tmp"
+        ms_die "Checksum verification failed for $url"
+    fi
+
+    mv "$tmp_file" "$dest"
+    mv "$sha_tmp" "$sha_file"
+    chmod +x "$dest" 2>/dev/null || true
+}
+
+ms_activate_rust_env() {
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck disable=SC1090
+        . "$HOME/.cargo/env"
+    else
+        PATH="$HOME/.cargo/bin:$PATH"
+        export PATH
+    fi
+}

@@ -24,6 +24,11 @@ foreach ($arg in $ScriptArgs) {
             $doBuild = $false
             Set-MSFlag 'audit'
         }
+        '--install' {
+            $doInstall = $true
+            if (-not $doBuild.HasValue) { $doBuild = $false }
+            Set-MSFlag 'bootstrap'
+        }
         '--bootstrap' {
             $doInstall = $true
             if (-not $doBuild.HasValue) { $doBuild = $false }
@@ -32,6 +37,12 @@ foreach ($arg in $ScriptArgs) {
         '--build' {
             $doBuild = $true
             if (-not $doInstall.HasValue) { $doInstall = $false }
+            Set-MSFlag 'build'
+        }
+        '--all' {
+            $doInstall = $true
+            $doBuild = $true
+            Set-MSFlag 'bootstrap'
             Set-MSFlag 'build'
         }
         '--uninstall' {
@@ -50,7 +61,8 @@ MicroSerial Windows bootstrap
 
 Usage: bootstrap.ps1 [options]
   --audit-only       Run preflight checks only
-  --bootstrap        Install missing prerequisites (no build)
+  --install          Install missing prerequisites (no build)
+  --all              Audit, install, and build
   --build            Build only (assumes prerequisites)
   --uninstall        Remove build artifacts and cached downloads
   --dry-run          Show actions without executing
@@ -105,6 +117,7 @@ function Invoke-Preflight {
     Test-MSCommand -Name 'CMake' -Binary 'cmake' -VersionBlock { ([regex]::Match((cmake --version | Select-Object -First 1), '[0-9]+(\.[0-9]+)+')).Value } -Minimum '3.20.0' -InstallRef 'cmake' | Out-Null
     Test-MSCommand -Name 'Ninja' -Binary 'ninja' -VersionBlock { ([regex]::Match((ninja --version), '[0-9]+(\.[0-9]+)+')).Value } -Minimum '1.10.0' -InstallRef 'ninja' | Out-Null
     Test-MSCommand -Name 'pkg-config' -Binary 'pkg-config' -VersionBlock { ([regex]::Match((pkg-config --version), '[0-9]+(\.[0-9]+)+')).Value } -Minimum '0.29.0' -InstallRef 'pkg-config' | Out-Null
+    Test-MSCommand -Name 'curl' -Binary 'curl' -VersionBlock { ([regex]::Match((curl --version | Select-Object -First 1), 'curl ([0-9]+(\.[0-9]+)+)')).Groups[1].Value } -Minimum '7.70.0' -InstallRef 'curl' | Out-Null
 
     $makeCmd = Get-Command 'make' -ErrorAction SilentlyContinue
     if (-not $makeCmd) { $makeCmd = Get-Command 'mingw32-make' -ErrorAction SilentlyContinue }
@@ -113,6 +126,17 @@ function Invoke-Preflight {
     } else {
         Add-MSReport '[MISSING] GNU Make -> install: make'
         Add-MissingRequirement 'make'
+    }
+
+    if (Get-Command 'clang' -ErrorAction SilentlyContinue) {
+        Test-MSCommand -Name 'LLVM Clang' -Binary 'clang' -VersionBlock { ([regex]::Match((clang --version | Select-Object -First 1), 'clang version ([0-9]+(\.[0-9]+)+)')).Groups[1].Value } -Minimum '13.0.0' -InstallRef 'llvm' | Out-Null
+    } else {
+        Add-MSReport '[MISSING] LLVM clang -> install: llvm'
+        Add-MissingRequirement 'llvm'
+    }
+
+    if (Get-Command 'llvm-config' -ErrorAction SilentlyContinue) {
+        Test-MSCommand -Name 'llvm-config' -Binary 'llvm-config' -VersionBlock { (llvm-config --version) } -Minimum '13.0.0' -InstallRef 'llvm' | Out-Null
     }
 
     $vsPath = Get-VsInstallPath
@@ -221,6 +245,7 @@ if ($needsInstall) {
         throw "No installer available for $Token. Install manually."
     }
 
+    $needsRustup = $false
     foreach ($token in $MS.Missing) {
         switch ($token) {
             'git' { Install-Package -Token $token -WingetId 'Git.Git' -ChocoId 'git' -ScoopId 'git' }
@@ -228,9 +253,11 @@ if ($needsInstall) {
             'ninja' { Install-Package -Token $token -WingetId 'Ninja-build.Ninja' -ChocoId 'ninja' -ScoopId 'ninja' }
             'pkg-config' { Install-Package -Token $token -WingetId 'StrawberryPerl.StrawberryPerl' -ChocoId 'pkgconfiglite' -ScoopId 'pkg-config' }
             'make' { Install-Package -Token $token -WingetId 'GnuWin32.Make' -ChocoId 'make' -ScoopId 'make' }
-            'rustup' { Install-Package -Token $token -WingetId 'Rustlang.Rustup' -ChocoId 'rustup.install' -ScoopId 'rustup' }
-            'rustup-toolchain' { }
-            'rustup-target' { }
+            'llvm' { Install-Package -Token $token -WingetId 'LLVM.LLVM' -ChocoId 'llvm' -ScoopId 'llvm' }
+            'curl' { Install-Package -Token $token -WingetId 'cURL.cURL' -ChocoId 'curl' -ScoopId 'curl' }
+            'rustup' { $needsRustup = $true; Install-Package -Token $token -WingetId 'Rustlang.Rustup' -ChocoId 'rustup.install' -ScoopId 'rustup' }
+            'rustup-toolchain' { $needsRustup = $true }
+            'rustup-target' { $needsRustup = $true }
             'vs-buildtools' {
                 if ($availableManagers.winget) {
                     $override = '--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --add Microsoft.VisualStudio.Component.Windows10SDK.19041 --add Microsoft.VisualStudio.Component.Windows11SDK.22621'
@@ -246,13 +273,11 @@ if ($needsInstall) {
     }
 
     if (Get-Command 'rustup' -ErrorAction SilentlyContinue) {
-        Invoke-MSCommand -Command 'rustup' -Arguments @('toolchain','install','stable')
-        Invoke-MSCommand -Command 'rustup' -Arguments @('default','stable')
-        Invoke-MSCommand -Command 'rustup' -Arguments @('target','add',$expectedTarget)
-        $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
-        if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $cargoBin })) {
-            $env:PATH = "$cargoBin;$env:PATH"
-        }
+        $needsRustup = $true
+    }
+
+    if ($needsRustup -or $MS.Force) {
+        Ensure-Rustup -TargetTriple $expectedTarget
     }
 }
 
@@ -263,6 +288,27 @@ function Invoke-WithVsEnv {
     }
     $wrapped = "call `"$($MS.VsDevCmd)`" -arch=x64 -host_arch=x64 && $CommandLine"
     Invoke-MSCommand -Command $wrapped -Shell
+}
+
+function Ensure-Rustup {
+    param([string]$TargetTriple)
+
+    if (-not (Get-Command 'rustup' -ErrorAction SilentlyContinue)) {
+        if ($MS.Offline) { throw 'rustup missing and offline mode requested' }
+        $installer = Join-Path $MS.CacheDir "rustup-init-$TargetTriple.exe"
+        $base = "https://static.rust-lang.org/rustup/dist/$TargetTriple/rustup-init.exe"
+        Invoke-MSDownload -Uri $base -ChecksumUri "$base.sha256" -Destination $installer
+        Invoke-MSCommand -Command $installer -Arguments @('-y','--no-modify-path','--profile','minimal')
+    }
+
+    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    if (-not ($env:PATH -split ';' | Where-Object { $_ -ieq $cargoBin })) {
+        $env:PATH = "$cargoBin;$env:PATH"
+    }
+
+    Invoke-MSCommand -Command 'rustup' -Arguments @('toolchain','install','stable')
+    Invoke-MSCommand -Command 'rustup' -Arguments @('default','stable')
+    Invoke-MSCommand -Command 'rustup' -Arguments @('target','add',$TargetTriple)
 }
 
 if ($doBuild) {

@@ -21,7 +21,8 @@ MicroSerial Linux bootstrap
 Usage: bootstrap.sh [options]
 
   --audit-only       Run preflight checks only
-  --bootstrap        Install missing prerequisites (no build)
+  --install          Install missing prerequisites (no build)
+  --all              Audit, install, and build
   --build            Build only (assumes prerequisites)
   --uninstall        Remove build artifacts and cached downloads
   --dry-run          Show actions without executing
@@ -39,7 +40,7 @@ while [ $# -gt 0 ]; do
             DO_BUILD=0
             ms_set_flag audit
             ;;
-        --bootstrap)
+        --install|--bootstrap)
             DO_INSTALL=1
             if [ "$DO_BUILD" -eq -1 ]; then
                 DO_BUILD=0
@@ -51,6 +52,12 @@ while [ $# -gt 0 ]; do
             if [ "$DO_INSTALL" -eq -1 ]; then
                 DO_INSTALL=0
             fi
+            ms_set_flag build
+            ;;
+        --all)
+            DO_INSTALL=1
+            DO_BUILD=1
+            ms_set_flag bootstrap
             ms_set_flag build
             ;;
         --uninstall)
@@ -137,6 +144,10 @@ PKGCFG_MIN=0.29.0
 GIT_MIN=2.30.0
 MAKE_MIN=4.2.0
 GCC_MIN=9.0.0
+GPP_MIN=9.0.0
+LLVM_MIN=13.0.0
+CLANGDEV_MIN=13.0.0
+CURL_MIN=7.70.0
 
 check_toolchains() {
     ms_require_command "git" git "git --version" 'git version \([0-9.]*\)' "$GIT_MIN" git
@@ -144,12 +155,23 @@ check_toolchains() {
     ms_require_command "Ninja" ninja "ninja --version" '^\([0-9.]*\)$' "$NINJA_MIN" ninja
     ms_require_command "pkg-config" pkg-config "pkg-config --version" '^\([0-9.]*\)$' "$PKGCFG_MIN" pkg-config
     ms_require_command "GNU Make" make "make --version" 'GNU Make \([0-9.]*\)' "$MAKE_MIN" build-essential
+    ms_require_command "curl" curl "curl --version" '^curl \([0-9.]*\).*' "$CURL_MIN" curl
     if command -v gcc >/dev/null 2>&1; then
         ms_require_command "GCC" gcc "gcc -dumpfullversion" '^\([0-9.]*\)$' "$GCC_MIN" build-essential
-    elif command -v clang >/dev/null 2>&1; then
+    else
+        ms_append_report "[MISSING] GCC -> install: build-essential"
+        ms_record_missing build-essential
+    fi
+    if command -v clang >/dev/null 2>&1; then
         ms_require_command "Clang" clang "clang --version" 'clang version \([0-9.]*\)' "$GCC_MIN" clang
     else
-        ms_append_report "[MISSING] C compiler (gcc/clang) -> install: build-essential"
+        ms_append_report "[MISSING] Clang -> install: clang"
+        ms_record_missing clang
+    fi
+    if command -v g++ >/dev/null 2>&1; then
+        ms_require_command "G++" g++ "g++ -dumpfullversion" '^\([0-9.]*\)$' "$GPP_MIN" build-essential
+    else
+        ms_append_report "[MISSING] G++ compiler -> install: build-essential"
         ms_record_missing build-essential
     fi
 
@@ -190,6 +212,56 @@ check_toolchains() {
         ms_append_report "[MISSING] libudev development files -> install: libudev"
         ms_record_missing libudev
     fi
+
+    if command -v llvm-config >/dev/null 2>&1; then
+        ms_require_command "LLVM" llvm-config "llvm-config --version" '^\([0-9.]*\)$' "$LLVM_MIN" llvm-dev
+    else
+        ms_append_report "[MISSING] llvm-config -> install: llvm-dev"
+        ms_record_missing llvm-dev
+    fi
+
+    if pkg-config --exists libclang 2>/dev/null; then
+        clang_ver=$(pkg-config --modversion libclang 2>/dev/null)
+        if [ -n "$clang_ver" ]; then
+            if ms_version_ge "$clang_ver" "$CLANGDEV_MIN"; then
+                ms_append_report "[OK] libclang $clang_ver (>= $CLANGDEV_MIN)"
+            else
+                ms_append_report "[OUTDATED] libclang $clang_ver (< $CLANGDEV_MIN) -> install: libclang"
+                ms_record_missing libclang
+            fi
+        else
+            ms_append_report "[WARN] libclang version undetected"
+        fi
+    else
+        ms_append_report "[MISSING] libclang development files -> install: libclang"
+        ms_record_missing libclang
+    fi
+}
+
+ensure_rustup() {
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64) RUSTUP_TRIPLE=x86_64-unknown-linux-gnu ;;
+        aarch64) RUSTUP_TRIPLE=aarch64-unknown-linux-gnu ;;
+        armv7l) RUSTUP_TRIPLE=armv7-unknown-linux-gnueabihf ;;
+        armv6l) RUSTUP_TRIPLE=armv6-unknown-linux-gnueabihf ;;
+        *) RUSTUP_TRIPLE="${ARCH}-unknown-linux-gnu" ;;
+    esac
+
+    if ! command -v rustup >/dev/null 2>&1; then
+        if [ "$MS_OFFLINE" -eq 1 ]; then
+            ms_die "rustup missing and offline mode requested"
+        fi
+        installer="$MS_CACHE_DIR/rustup-init-${RUSTUP_TRIPLE}"
+        base_url="https://static.rust-lang.org/rustup/dist/${RUSTUP_TRIPLE}/rustup-init"
+        ms_download_with_checksum "$base_url" "${base_url}.sha256" "$installer"
+        ms_run_cmd "$installer" -y --profile minimal --no-modify-path
+    fi
+
+    ms_activate_rust_env
+    ms_run_cmd rustup toolchain install stable
+    ms_run_cmd rustup default stable
+    ms_run_cmd rustup target add "$RUSTUP_TRIPLE"
 }
 
 linux_install_missing() {
@@ -208,6 +280,7 @@ linux_install_missing() {
     APT_PKGS=""
     DNF_PKGS=""
     PAC_PKGS=""
+    NEED_RUSTUP=0
 
     printf "%s" "$MS_MISSING" | sort | uniq | while IFS= read -r token; do
         [ -z "$token" ] && continue
@@ -242,19 +315,34 @@ linux_install_missing() {
                 add_pkg DNF_PKGS clang
                 add_pkg PAC_PKGS clang
                 ;;
+            llvm-dev)
+                add_pkg APT_PKGS llvm-dev
+                add_pkg DNF_PKGS llvm-devel
+                add_pkg PAC_PKGS llvm
+                ;;
+            libclang)
+                add_pkg APT_PKGS libclang-dev
+                add_pkg DNF_PKGS clang-devel
+                add_pkg PAC_PKGS clang
+                ;;
             rustup)
-                add_pkg APT_PKGS rustup
-                add_pkg DNF_PKGS rustup
-                add_pkg PAC_PKGS rustup
+                NEED_RUSTUP=1
                 ;;
             rustup-toolchain)
-                ;; # handled separately
+                NEED_RUSTUP=1
+                ;;
             rustup-target-linux)
-                ;; # handled separately
+                NEED_RUSTUP=1
+                ;;
             libudev)
                 add_pkg APT_PKGS libudev-dev
                 add_pkg DNF_PKGS systemd-devel
                 add_pkg PAC_PKGS systemd
+                ;;
+            curl)
+                add_pkg APT_PKGS curl
+                add_pkg DNF_PKGS curl
+                add_pkg PAC_PKGS curl
                 ;;
             *)
                 ms_warn "No package mapping for token $token"
@@ -298,23 +386,11 @@ linux_install_missing() {
     esac
 
     if command -v rustup >/dev/null 2>&1; then
-        if rustup toolchain list --installed 2>/dev/null | grep -q '^stable'; then
-            :
-        else
-            ms_run_cmd rustup toolchain install stable
-        fi
-        if rustup target list --installed 2>/dev/null | grep -q 'x86_64-unknown-linux-gnu'; then
-            :
-        else
-            ms_run_cmd rustup target add x86_64-unknown-linux-gnu
-        fi
-        ms_run_cmd rustup default stable
-        if [ -f "$HOME/.cargo/env" ]; then
-            # shellcheck disable=SC1090
-            . "$HOME/.cargo/env"
-        else
-            export PATH="$HOME/.cargo/bin:$PATH"
-        fi
+        NEED_RUSTUP=1
+    fi
+
+    if [ $NEED_RUSTUP -eq 1 ] || [ $MS_FORCE -eq 1 ]; then
+        ensure_rustup
     fi
 }
 
