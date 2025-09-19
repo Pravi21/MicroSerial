@@ -30,6 +30,7 @@ impl SerialSession {
     fn new(mut port: SerialPort) -> Result<Self, String> {
         let (tx, rx) = mpsc::channel();
         let data_tx = tx.clone();
+        let event_tx = tx.clone();
         port.configure(&default_config())
             .map_err(|e| format!("configure error {e}"))?;
         port.start(
@@ -46,7 +47,7 @@ impl SerialSession {
                 }
             },
             move |code, message| {
-                let _ = tx.send(UiMessage::Event(format!("event {code}: {message}")));
+                let _ = event_tx.send(UiMessage::Event(format!("event {code}: {message}")));
             },
         )
         .map_err(|e| format!("start error {e}"))?;
@@ -183,7 +184,7 @@ impl eframe::App for MicroSerialApp {
     }
 }
 
-fn main() -> eframe::Result {
+fn main() -> eframe::Result<()> {
     env_logger::init();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
