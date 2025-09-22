@@ -55,29 +55,6 @@ impl RendererSelection {
             diagnostics,
         }
     }
-
-    fn new_glow(
-        attempt: usize,
-        attempt_label: &'static str,
-        mut diagnostics: RendererDiagnostics,
-    ) -> Self {
-        diagnostics.backend = "glow".to_string();
-        diagnostics.backend_details = Some("Software renderer (glow fallback)".to_string());
-        diagnostics.adapter_type = Some("Cpu".to_string());
-        diagnostics.adapter_name = diagnostics
-            .adapter_name
-            .or_else(|| Some("Software Renderer".to_string()));
-
-        let mut options = eframe::NativeOptions::default();
-        options.renderer = eframe::Renderer::Glow;
-        options.hardware_acceleration = eframe::HardwareAcceleration::Off;
-        Self {
-            attempt,
-            attempt_label,
-            options,
-            diagnostics,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -235,7 +212,6 @@ impl Attempt {
     fn glow_software() -> Self {
         Self::GlowSoftware {
             label: "software glow",
- codex/fix-gui-blank-screen-issue
         }
     }
 
@@ -246,18 +222,6 @@ impl Attempt {
     }
 
     fn apply(&self, launch: &LaunchConfig, diagnostics: &mut RendererDiagnostics) -> AttemptConfig {
-
-        }
-    }
-
-    fn label(&self) -> &'static str {
-        match self {
-            Self::Wgpu { label, .. } | Self::GlowSoftware { label } => label,
-        }
-    }
-
-    fn apply(&self, launch: &LaunchConfig, diagnostics: &mut RendererDiagnostics) {
- main
         match self {
             Self::Wgpu {
                 backend,
@@ -290,14 +254,11 @@ impl Attempt {
                         unsafe { env::remove_var("WGPU_POWER_PREF") };
                     }
                 }
- codex/fix-gui-blank-screen-issue
 
                 AttemptConfig {
                     backends: backend_mask(*backend),
                     force_fallback: software,
                 }
-
- main
             }
             Self::GlowSoftware { .. } => {
                 diagnostics.software_backend = true;
@@ -310,10 +271,7 @@ impl Attempt {
                     env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
                     env::remove_var("WGPU_POWER_PREF");
                 }
- codex/fix-gui-blank-screen-issue
                 AttemptConfig::glow()
-
- main
             }
         }
     }
@@ -329,7 +287,6 @@ impl Attempt {
 
     fn is_wgpu(&self) -> bool {
         matches!(self, Self::Wgpu { .. })
- codex/fix-gui-blank-screen-issue
     }
 }
 
@@ -355,7 +312,6 @@ fn backend_mask(backend: Option<&'static str>) -> wgpu::Backends {
         Some("dx12") => wgpu::Backends::DX12,
         Some("gl") => wgpu::Backends::GL,
         _ => wgpu::Backends::all(),
- main
     }
 }
 
@@ -402,7 +358,6 @@ pub fn detect(launch: &LaunchConfig, start_attempt: usize) -> Result<RendererSel
         current.started_at = Instant::now();
         current.fallback_used = start_attempt > 0 || !failures.is_empty();
 
- codex/fix-gui-blank-screen-issue
         let attempt_config = attempt.apply(launch, &mut current);
 
         if attempt.is_wgpu() {
@@ -412,13 +367,6 @@ pub fn detect(launch: &LaunchConfig, start_attempt: usize) -> Result<RendererSel
                 prefer_low_power,
                 attempt_config.force_fallback,
             ) {
-
-        attempt.apply(launch, &mut current);
-
-        if attempt.is_wgpu() {
-            let prefer_low_power = attempt.prefers_low_power(launch);
-            match probe_wgpu(prefer_low_power) {
- main
                 Ok(info) => {
                     current.backend = format!("{:?}", info.backend);
                     current.adapter_name = Some(info.name.clone());
