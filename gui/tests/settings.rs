@@ -4,10 +4,15 @@ use microserial_gui::core::SerialConfig;
 use microserial_gui::profiles::SerialProfile;
 use microserial_gui::settings::Settings;
 use microserial_gui::theme::ThemePreference;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 use tempfile::tempdir;
+
+static CONFIG_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[test]
 fn settings_round_trip() {
+    let _guard = CONFIG_GUARD.lock().unwrap();
     let dir = tempdir().expect("tempdir");
     unsafe {
         std::env::set_var("MICROSERIAL_CONFIG_DIR", dir.path());
@@ -34,6 +39,7 @@ fn settings_round_trip() {
 
 #[test]
 fn settings_file_is_json() {
+    let _guard = CONFIG_GUARD.lock().unwrap();
     let dir = tempdir().expect("tempdir");
     unsafe {
         std::env::set_var("MICROSERIAL_CONFIG_DIR", dir.path());
