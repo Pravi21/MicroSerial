@@ -82,6 +82,7 @@ impl MicroSerialApp {
         diagnostics.renderer = renderer.clone();
         if settings.force_software {
             diagnostics.renderer.forced_software = true;
+            diagnostics.renderer.software_backend = true;
         }
 
         Self {
@@ -752,7 +753,7 @@ impl eframe::App for MicroSerialApp {
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         let _ = self.settings.save();
     }
 }

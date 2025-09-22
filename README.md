@@ -48,8 +48,15 @@ The GUI auto-discovers serial ports, opens a dedicated async session, and render
    ```bash
    cargo build --manifest-path gui/Cargo.toml
    ```
-   The GUI crate regenerates bindings and links against the freshly built `microserial_core` static library. The `eframe` dependency enables both Wayland and X11 window backends so either display server is supported out of the box.
+   The GUI crate regenerates bindings and links against the freshly built `microserial_core` static library. Rendering is handled exclusively by the `wgpu` backend so the app boots without touching glutin/GL drivers.
 4. **Run it:** `cargo run --manifest-path gui/Cargo.toml`
+
+   Runtime renderer knobs:
+
+   - `--force-software` forces a software path (`LIBGL_ALWAYS_SOFTWARE=1`, `WGPU_POWER_PREF=low_power`).
+   - `WGPU_BACKEND` selects a backend explicitly (`vulkan`, `gl`, `metal`).
+   - `LIBGL_ALWAYS_SOFTWARE=1` nudges Mesa into a CPU pipeline when `gl` is used.
+   - `WGPU_POWER_PREF` hints to `wgpu` which adapter class to prefer (`low_power` pairs well with software mode).
 
 ### macOS
 

@@ -33,6 +33,12 @@ impl DiagnosticsState {
                 if let Some(detail) = &self.renderer.backend_details {
                     ui.label(RichText::new(detail).italics());
                 }
+                if self.renderer.fallback_used {
+                    ui.label("Fallback backend engaged");
+                }
+                if self.renderer.software_backend {
+                    ui.label("Software fallback active");
+                }
                 ui.label(format!(
                     "Renderer probed {:.1?} ago",
                     self.renderer.started_at.elapsed()
