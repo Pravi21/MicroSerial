@@ -41,11 +41,15 @@ impl RendererSelection {
         diagnostics.backend = String::from("glow");
         let mut options = eframe::NativeOptions::default();
         options.renderer = eframe::Renderer::Glow;
-        if diagnostics.software_backend {
-            options.hardware_acceleration = eframe::HardwareAcceleration::Off;
-        } else {
-            options.hardware_acceleration = eframe::HardwareAcceleration::Preferred;
-        }
+        // eframe's glow backend ultimately relies on the platform OpenGL loader.
+        // Requesting "software" acceleration through winit frequently prevents a
+        // context from being created on systems that only expose llvmpipe/OSMesa
+        // fallbacks. We instead rely on the environment variables configured by
+        // the launch attempts (e.g. `LIBGL_ALWAYS_SOFTWARE=1`) to steer Mesa onto
+        // a CPU renderer while keeping the context creation path compatible with
+        // more drivers. As a result we always prefer hardware acceleration here
+        // and let the driver honour the software override when present.
+        options.hardware_acceleration = eframe::HardwareAcceleration::Preferred;
         Self {
             attempt,
             attempt_label,
