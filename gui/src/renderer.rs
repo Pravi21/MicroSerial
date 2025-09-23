@@ -32,6 +32,27 @@ impl RendererSelection {
             diagnostics,
         }
     }
+
+    fn new_glow(
+        attempt: usize,
+        attempt_label: &'static str,
+        mut diagnostics: RendererDiagnostics,
+    ) -> Self {
+        diagnostics.backend = String::from("glow");
+        let mut options = eframe::NativeOptions::default();
+        options.renderer = eframe::Renderer::Glow;
+        if diagnostics.software_backend {
+            options.hardware_acceleration = eframe::HardwareAcceleration::Off;
+        } else {
+            options.hardware_acceleration = eframe::HardwareAcceleration::Preferred;
+        }
+        Self {
+            attempt,
+            attempt_label,
+            options,
+            diagnostics,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +150,7 @@ impl LaunchConfig {
     fn fallback_plan(&self) -> Vec<Attempt> {
         let mut attempts = vec![Attempt::system_default(), Attempt::vulkan()];
         attempts.push(Attempt::gl_software());
+        attempts.push(Attempt::glow());
         #[cfg(target_os = "macos")]
         attempts.push(Attempt::metal());
         attempts
@@ -144,6 +166,10 @@ enum Attempt {
     Wgpu {
         label: &'static str,
         backend: Option<&'static str>,
+        enforce_software: bool,
+    },
+    Glow {
+        label: &'static str,
         enforce_software: bool,
     },
 }
@@ -173,6 +199,13 @@ impl Attempt {
         }
     }
 
+    fn glow() -> Self {
+        Self::Glow {
+            label: "eframe glow (OpenGL)",
+            enforce_software: true,
+        }
+    }
+
     #[cfg(target_os = "macos")]
     fn metal() -> Self {
         Self::Wgpu {
@@ -185,6 +218,7 @@ impl Attempt {
     fn label(&self) -> &'static str {
         match self {
             Self::Wgpu { label, .. } => label,
+            Self::Glow { label, .. } => label,
         }
     }
 
@@ -222,10 +256,41 @@ impl Attempt {
                     }
                 }
 
-                AttemptConfig {
+                AttemptConfig::Wgpu {
                     backends: backend_mask(*backend),
                     force_fallback: software,
                 }
+            }
+            Self::Glow {
+                enforce_software, ..
+            } => {
+                match &launch.original_backend {
+                    Some(original) => unsafe { env::set_var("WGPU_BACKEND", original) },
+                    None => unsafe { env::remove_var("WGPU_BACKEND") },
+                }
+
+                let software = launch.force_software || *enforce_software;
+                diagnostics.software_backend = software;
+                if software {
+                    unsafe {
+                        env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
+                        env::set_var("WGPU_POWER_PREF", "low_power");
+                    }
+                } else {
+                    if let Some(original) = &launch.original_libgl {
+                        unsafe { env::set_var("LIBGL_ALWAYS_SOFTWARE", original) };
+                    } else {
+                        unsafe { env::remove_var("LIBGL_ALWAYS_SOFTWARE") };
+                    }
+
+                    if let Some(original) = &launch.original_power_pref {
+                        unsafe { env::set_var("WGPU_POWER_PREF", original) };
+                    } else {
+                        unsafe { env::remove_var("WGPU_POWER_PREF") };
+                    }
+                }
+
+                AttemptConfig::Glow { software }
             }
         }
     }
@@ -235,14 +300,22 @@ impl Attempt {
             Self::Wgpu {
                 enforce_software, ..
             } => launch.force_software || *enforce_software,
+            Self::Glow {
+                enforce_software, ..
+            } => launch.force_software || *enforce_software,
         }
     }
 }
 
 #[derive(Clone, Copy)]
-struct AttemptConfig {
-    backends: wgpu::Backends,
-    force_fallback: bool,
+enum AttemptConfig {
+    Wgpu {
+        backends: wgpu::Backends,
+        force_fallback: bool,
+    },
+    Glow {
+        software: bool,
+    },
 }
 
 fn backend_mask(backend: Option<&'static str>) -> wgpu::Backends {
@@ -300,27 +373,41 @@ pub fn detect(launch: &LaunchConfig, start_attempt: usize) -> Result<RendererSel
 
         let attempt_config = attempt.apply(launch, &mut current);
 
-        let prefer_low_power = attempt.prefers_low_power(launch);
-        match probe_wgpu(
-            attempt_config.backends,
-            prefer_low_power,
-            attempt_config.force_fallback,
-        ) {
-            Ok(info) => {
-                current.backend = format!("{:?}", info.backend);
-                current.adapter_name = Some(info.name.clone());
-                current.adapter_type = Some(format!("{:?}", info.device_type));
-                current.backend_details = Some(format!("Driver: {}", info.driver));
-                if info.device_type == wgpu::DeviceType::Cpu {
+        match attempt_config {
+            AttemptConfig::Wgpu {
+                backends,
+                force_fallback,
+            } => {
+                let prefer_low_power = attempt.prefers_low_power(launch);
+                match probe_wgpu(backends, prefer_low_power, force_fallback) {
+                    Ok(info) => {
+                        current.backend = format!("{:?}", info.backend);
+                        current.adapter_name = Some(info.name.clone());
+                        current.adapter_type = Some(format!("{:?}", info.device_type));
+                        current.backend_details = Some(format!("Driver: {}", info.driver));
+                        if info.device_type == wgpu::DeviceType::Cpu {
+                            current.software_backend = true;
+                        }
+                        if !failures.is_empty() {
+                            current.failure_reason = Some(failures.join(" -> "));
+                        }
+                        return Ok(RendererSelection::new_wgpu(index, attempt.label(), current));
+                    }
+                    Err(err) => {
+                        failures.push(format!("{}: {}", attempt.label(), err));
+                    }
+                }
+            }
+            AttemptConfig::Glow { software } => {
+                current.backend = String::from("glow");
+                current.backend_details = Some("Renderer: eframe glow".to_string());
+                if software {
                     current.software_backend = true;
                 }
                 if !failures.is_empty() {
                     current.failure_reason = Some(failures.join(" -> "));
                 }
-                return Ok(RendererSelection::new_wgpu(index, attempt.label(), current));
-            }
-            Err(err) => {
-                failures.push(format!("{}: {}", attempt.label(), err));
+                return Ok(RendererSelection::new_glow(index, attempt.label(), current));
             }
         }
     }
