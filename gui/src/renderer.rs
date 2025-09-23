@@ -357,6 +357,17 @@ fn probe_wgpu(
         backends
     };
 
+    let effective_force_fallback = if cfg!(target_os = "windows") {
+        force_fallback_adapter
+    } else {
+        // `force_fallback_adapter` currently only has effect on Windows where wgpu
+        // can surface the D3D WARP adapter. Requesting it on other platforms causes
+        // `request_adapter` to return `None`, preventing our software GL fallback
+        // (llvmpipe/Zink) from being discovered. Disable it so Linux/BSD builds can
+        // still enumerate software adapters exposed through Mesa.
+        false
+    };
+
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: requested_backends,
         dx12_shader_compiler: Default::default(),
@@ -371,7 +382,7 @@ fn probe_wgpu(
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference,
-        force_fallback_adapter,
+        force_fallback_adapter: effective_force_fallback,
         compatible_surface: None,
     }))
     .ok_or_else(|| "No compatible GPU adapters".to_string())?;
