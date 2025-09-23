@@ -80,11 +80,15 @@ fn main() -> eframe::Result<()> {
 fn run_with_selection(selection: &RendererSelection, settings: &Settings) -> eframe::Result<()> {
     let diagnostics = selection.diagnostics.clone();
     let app_settings = settings.clone();
-    let mut options = selection.options.clone();
-    options.follow_system_theme = false;
+    let mut base_options = selection.options.clone();
+    base_options.follow_system_theme = false;
+    let native_options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        ..base_options
+    };
     eframe::run_native(
         "MicroSerial",
-        options,
+        native_options,
         Box::new(move |_cc| {
             Box::new(MicroSerialApp::new(
                 diagnostics.clone(),

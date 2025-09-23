@@ -4,8 +4,10 @@
 
 1. **Check the diagnostics dialog** – it lists the active renderer and any fallback reasons.
 2. **Force software rendering** – start the app with `MICROSERIAL_FORCE_SOFTWARE=1` or toggle *Appearance → Force software rendering* inside the GUI.
-3. **Verify Wayland vs X11** – some older drivers only work on X11. Run `MICROSERIAL_FORCE_SOFTWARE=1` to confirm the UI renders correctly, then set `WINIT_UNIX_BACKEND=x11` to pin the compositor.
-4. **Inspect driver logs** – DRI authentication failures typically stem from outdated `mesa` or missing permissions under `/dev/dri/*`.
+3. **Launch with the pure software stack** – export `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` before running `cargo run --manifest-path gui/Cargo.toml`. This forces wgpu to use Mesa’s llvmpipe renderer and bypasses broken GPU stacks.
+4. **Verify Wayland vs X11** – some older drivers only work on X11. Run `MICROSERIAL_FORCE_SOFTWARE=1` to confirm the UI renders correctly, then set `WINIT_UNIX_BACKEND=x11` to pin the compositor.
+5. **Install Mesa/Vulkan runtime packages** – on Debian/Ubuntu hosts run `sudo apt install mesa-utils mesa-vulkan-drivers libegl1` to ensure the software GL/Vulkan layers are present.
+6. **Inspect driver logs** – DRI authentication failures typically stem from outdated `mesa` or missing permissions under `/dev/dri/*`.
 
 ## No devices listed
 
