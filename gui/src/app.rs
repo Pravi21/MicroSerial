@@ -753,7 +753,7 @@ impl eframe::App for MicroSerialApp {
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         let _ = self.settings.save();
     }
 }
