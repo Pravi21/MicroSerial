@@ -35,7 +35,8 @@ The GUI boots through a layered renderer selection pipeline that favours hardwar
 
 1. **Launch configuration** collects signals from environment variables, command-line flags, and persisted settings. `MICROSERIAL_FORCE_SOFTWARE=1`, the CLI `--force-software` flag, or the in-app toggle call `LaunchConfig::enable_force_software`, exporting `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_POWER_PREF=low_power` before any adapter probe runs.
 2. **`renderer::detect`** records the active compositor (Wayland or X11) and attempts to obtain a `wgpu` adapter while iterating through the fallback chain. Each step sets `WGPU_BACKEND`/`LIBGL_ALWAYS_SOFTWARE` as required before probing.
-3. **Runtime fallback**: if `eframe::run_native` still fails to build a surface with the chosen backend, the launcher advances to the next attempt in the chain without ever touching glutin. On non-Windows platforms the "software" steps rely on Mesa's llvmpipe/Zink stack or pure OpenGL contexts, so the launcher avoids requesting wgpu's explicit fallback adapter (which only exists on Windows and would prevent the Mesa adapters from being enumerated) and finally falls back to `eframe`'s built-in `glow` renderer.
+codex/investigate-egl-and-dri-warnings
+3. **Runtime fallback**: if `eframe::run_native` still fails to build a surface with the chosen backend, the launcher advances to the next attempt in the chain without ever touching glutin. On non-Windows platforms the "software" steps rely on Mesa's llvmpipe/Zink stack or pure OpenGL contexts, so the launcher avoids requesting wgpu's explicit fallback adapter (which only exists on Windows and would prevent the Mesa adapters from being enumerated) and finally falls back to `eframe`'s built-in `glow` renderer. 
 
 ## Rationale
 
